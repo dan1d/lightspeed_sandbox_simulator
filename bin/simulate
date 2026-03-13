@@ -1,0 +1,162 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'thor'
+require_relative '../lib/lightspeed_sandbox_simulator'
+
+module LightspeedSandboxSimulator
+  class CLI < Thor
+    desc 'version', 'Show version'
+    def version
+      puts 'lightspeed_sandbox_simulator v0.1.0'
+    end
+
+    desc 'merchants', 'List configured API devices'
+    def merchants
+      devices = Configuration.available_merchants
+      if devices.empty?
+        puts 'No devices found in .env.json'
+        return
+      end
+
+      devices.each do |d|
+        puts "##{d[:index]}: #{d[:name] || 'unnamed'} (business_id: #{d[:business_id]})"
+      end
+    end
+
+    desc 'setup', 'Set up POS entities (categories, items, payment methods)'
+    method_option :index, aliases: '-i', type: :numeric, desc: 'Device index'
+    method_option :business_type, aliases: '-b', type: :string, default: 'restaurant'
+    def setup
+      config = load_config(options[:index])
+      bt = options[:business_type].to_sym
+      gen = Generators::EntityGenerator.new(config: config, business_type: bt)
+      result = gen.setup_all
+      puts "Setup complete: #{result[:categories].size} categories, " \
+           "#{result[:items].size} items, #{result[:payment_methods].size} payment methods"
+    end
+
+    desc 'generate', 'Generate orders for today'
+    method_option :count, aliases: '-n', type: :numeric, desc: 'Number of orders'
+    method_option :refund, aliases: '-r', type: :numeric, default: 5, desc: 'Refund percentage'
+    method_option :index, aliases: '-i', type: :numeric, desc: 'Device index'
+    method_option :business_type, aliases: '-b', type: :string, default: 'restaurant'
+    def generate
+      config = load_config(options[:index])
+      gen = Generators::OrderGenerator.new(
+        config: config,
+        business_type: options[:business_type].to_sym,
+        refund_percentage: options[:refund]
+      )
+      orders = gen.generate_today(count: options[:count])
+      puts "Generated #{orders.size} orders"
+    end
+
+    desc 'day', 'Generate a realistic full day'
+    method_option :multiplier, aliases: '-x', type: :numeric, default: 1.0
+    method_option :index, aliases: '-i', type: :numeric, desc: 'Device index'
+    method_option :business_type, aliases: '-b', type: :string, default: 'restaurant'
+    def day
+      config = load_config(options[:index])
+      gen = Generators::OrderGenerator.new(
+        config: config,
+        business_type: options[:business_type].to_sym
+      )
+      orders = gen.generate_realistic_day(multiplier: options[:multiplier])
+      puts "Generated #{orders.size} orders (#{options[:multiplier]}x)"
+    end
+
+    desc 'rush', 'Generate a meal period rush'
+    method_option :period, aliases: '-p', type: :string, default: 'dinner'
+    method_option :count, aliases: '-n', type: :numeric, default: 20
+    method_option :index, aliases: '-i', type: :numeric, desc: 'Device index'
+    def rush
+      config = load_config(options[:index])
+      gen = Generators::OrderGenerator.new(config: config)
+      orders = gen.generate_rush(
+        period: options[:period].to_sym,
+        count: options[:count]
+      )
+      puts "Generated #{orders.size} #{options[:period]} orders"
+    end
+
+    desc 'full', 'Full setup + order generation'
+    method_option :index, aliases: '-i', type: :numeric, desc: 'Device index'
+    method_option :business_type, aliases: '-b', type: :string, default: 'restaurant'
+    def full
+      invoke :setup
+      invoke :generate
+    end
+
+    desc 'status', 'Show entity counts'
+    method_option :index, aliases: '-i', type: :numeric, desc: 'Device index'
+    def status
+      config = load_config(options[:index])
+      manager = Services::Lightspeed::ServicesManager.new(config: config)
+
+      categories = manager.menu.list_categories
+      cat_count = extract_count(categories, 'categories')
+      items = manager.menu.list_items
+      item_count = extract_count(items, 'items')
+      methods = manager.payment_methods.list_payment_methods
+      method_count = extract_count(methods, 'paymentMethods')
+
+      puts "Categories: #{cat_count}"
+      puts "Items: #{item_count}"
+      puts "Payment Methods: #{method_count}"
+    end
+
+    desc 'business_types', 'List available business types'
+    def business_types
+      Generators::DataLoader::BUSINESS_TYPES.each do |bt|
+        loader = Generators::DataLoader.new(business_type: bt)
+        cats = loader.load_categories.size
+        items = loader.load_items.size
+        puts "#{bt}: #{cats} categories, #{items} items"
+      end
+    end
+
+    desc 'db SUBCOMMAND', 'Database management'
+    method_option :business_type, aliases: '-b', type: :string, default: 'restaurant'
+    def db(subcommand)
+      url = Database.database_url
+      case subcommand
+      when 'create'  then Database.create!(url)
+      when 'migrate' then Database.connect!(url) && Database.migrate!
+      when 'seed'    then Database.connect!(url) && Database.seed!(business_type: options[:business_type].to_sym)
+      when 'reset'
+        Database.drop!(url)
+        Database.create!(url)
+        Database.connect!(url)
+        Database.migrate!
+        Database.seed!(business_type: options[:business_type].to_sym)
+      else puts "Unknown subcommand: #{subcommand}. Use: create, migrate, seed, reset"
+      end
+    end
+
+    private
+
+    def load_config(index = nil)
+      if index
+        config = Configuration.load_merchant(index: index)
+        raise Error, "Device ##{index} not found" unless config
+
+        config
+      else
+        LightspeedSandboxSimulator.configuration
+      end
+    end
+
+    def extract_count(data, key)
+      if data.is_a?(Hash) && data.key?(key)
+        Array(data[key]).size
+      elsif data.is_a?(Array)
+        data.size
+      else
+        0
+      end
+    end
+  end
+end
+
+LightspeedSandboxSimulator::CLI.start(ARGV)
