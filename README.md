@@ -1,5 +1,9 @@
 # Lightspeed Sandbox Simulator
 
+[![CI](https://github.com/dan1d/lightspeed_sandbox_simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/dan1d/lightspeed_sandbox_simulator/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/dan1d/lightspeed_sandbox_simulator)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A Ruby gem for simulating POS operations against the **Lightspeed K-Series API**. Generates realistic orders, payments, and transaction data for development and testing.
 
 ## Features
